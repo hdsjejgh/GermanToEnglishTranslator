@@ -240,14 +240,14 @@ input_dim = len(de_vocab)
 output_dim = len(en_vocab)
 
 #the embedding dimensions for the encoder and decoders
-enc_emb_dim = 256
-dec_emb_dim = 256
+enc_emb_dim = 1000
+dec_emb_dim = 1000
 
 #dimension of the hidden and cell vectors
-hidden_dim = 512
+hidden_dim = 1000
 
 #layers (rows) in the rnn
-layers = 2
+layers = 4
 
 #dropout percentage during training for the encoder and decoder
 enc_dropout = .5
@@ -255,6 +255,7 @@ dec_dropout = .5
 
 #device is the gpu if possible
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Device: {device}")
 
 #saves the vocabs for use in other files
 # torch.save(en_vocab,"en_vocab.pth")
@@ -397,7 +398,7 @@ if TRAIN:
         #if this epoch got the best validation loss so far, save this version of the model
         if valid_loss<best_loss:
             best_loss=valid_loss
-            torch.save(model.state_dict(),"model.pt")
+            torch.save(model.state_dict(),"de_to_en.pt")
 
         #displays the loss info
         print(f"Train Loss: {train_loss}")
