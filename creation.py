@@ -194,34 +194,8 @@ if __name__=="__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
-    # saves the vocabs for use in other files
-    # torch.save(en_vocab,"en_vocab.pth")
-    # torch.save(de_vocab, "de_vocab.pth")
-
     # to train or not to train
     TRAIN = False
-
-    # the encoder
-    encoder = BidirectionalEncoder(
-        input_dim=input_dim,
-        hidden_dim=hidden_dim,
-        embedding_dim=enc_emb_dim,
-        layers=layers,
-        dropout=enc_dropout
-    )
-
-    # the decoder
-    decoder = Decoder(
-        output_dim=output_dim,
-        hidden_dim=hidden_dim,
-        embedding_dim=dec_emb_dim,
-        layers=layers,
-        dropout=dec_dropout
-    )
-
-    # the actual model sent to appropriate device
-    model = Seq2Seq(encoder, decoder, device).to(device)
-
 
     print("Model Created")
 
@@ -230,15 +204,6 @@ if __name__=="__main__":
     def initialize(m):
         for name, param in m.named_parameters():
             nn.init.uniform_(param.data, -0.08, 0.08)
-
-
-    model.apply(initialize)
-
-    print("Model Weights Initialized")
-
-    # optimizer for the training and criterion for evaluation (and training)
-    optimizer = optim.Adam(model.parameters())
-    criterion = nn.CrossEntropyLoss(ignore_index=pad_index)
 
 
     # trains the model for one epoch
@@ -313,6 +278,35 @@ if __name__=="__main__":
     best_loss = float("inf")
 
     if TRAIN:
+        # the encoder
+        encoder = BidirectionalEncoder(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            embedding_dim=enc_emb_dim,
+            layers=layers,
+            dropout=enc_dropout
+        )
+
+        # the decoder
+        decoder = Decoder(
+            output_dim=output_dim,
+            hidden_dim=hidden_dim,
+            embedding_dim=dec_emb_dim,
+            layers=layers,
+            dropout=dec_dropout
+        )
+
+        # the actual model sent to appropriate device
+        model = Seq2Seq(encoder, decoder, device).to(device)
+
+        model.apply(initialize)
+
+        print("Model Weights Initialized")
+
+        # optimizer for the training and criterion for evaluation (and training)
+        optimizer = optim.Adam(model.parameters())
+        criterion = nn.CrossEntropyLoss(ignore_index=pad_index)
+
         print("Beginning Training:")
 
         # tqdm displays a progress bar
@@ -339,7 +333,7 @@ if __name__=="__main__":
             # if this epoch got the best validation loss so far, save this version of the model
             if valid_loss < best_loss:
                 best_loss = valid_loss
-                torch.save(model.state_dict(), "de_to_en_bdrnn.pt")
+                torch.save(model, "de_to_en_bdrnn.pt")
 
             # displays the loss info
             print(f"Train Loss: {train_loss}")
@@ -348,7 +342,10 @@ if __name__=="__main__":
         exit()
 
     # loading the model if not training
-    model.load_state_dict(torch.load("de_to_en_bdrnn.pt"))
+    model = torch.load("de_to_en_bdrnn.pt")
+
+    criterion = nn.CrossEntropyLoss(ignore_index=pad_index)
+
     test_loss = evaluate(model, test_loader, criterion, device)
     print(f"Test Loss: {test_loss}")
 
