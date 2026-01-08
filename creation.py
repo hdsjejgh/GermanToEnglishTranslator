@@ -1,12 +1,11 @@
-import random
 from models import *
-import torch
 import torch.nn as nn
 import torch.optim as optim
 import spacy
-import datasets
 import torchtext
-from datasets import Dataset
+import os
+from data import *
+from functools import partial
 
 #to stop torchtext from complaining every time i run it
 torchtext.disable_torchtext_deprecation_warning()
@@ -15,11 +14,11 @@ import tqdm
 import torch.multiprocessing as mp
 mp.freeze_support()
 
-pad_index=67
 
 #returns an appropriately padded batch of sequences from given batch of english and german examples
 #the preprocessing function for the loader
-def collate(batch):
+
+def collate(batch,pad_index):
     #gets the english and german token ids for each example
     en = [ex["en_ids"] for ex in batch]
     de = [ex["de_ids"] for ex in batch]
@@ -34,50 +33,33 @@ def collate(batch):
 
 if __name__=="__main__":
 
+    DATASET = "wmt14"
+    # to train or not to train
+    TRAIN = False
+    #number of training examples to use for larger datasets
+    #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
+    TRAINING_EXAMPLES = 50_000
+    #name of model directory
+    #saves model and vocab here if TRAIN = True
+    #loads model and vocab from here if TRAIN = False
+    MODEL_NAME = "de_to_en_bdrnn"
 
     #small scale tokenizers for english and german
     spacy_en = spacy.load('en_core_web_sm')
     spacy_de = spacy.load('de_core_news_sm')
     print("Tokenizers Loaded")
 
-    #train,validation, and test sets of examples
-    # train_data = datasets.load_dataset("wmt14","de-en", split="train",streaming=True)
-    # train_data = train_data.take(50_000)
-    # train_data = Dataset.from_list(list(train_data)).flatten()
-    # valid_data = datasets.load_dataset("wmt14","de-en", split="validation").flatten()
-    # test_data = datasets.load_dataset("wmt14","de-en", split="test").flatten()
-    #
-    # train_data = train_data.rename_columns({"translation.de":"de","translation.en":"en"})
-    # valid_data = valid_data.rename_columns({"translation.de":"de","translation.en":"en"})
-    # test_data = test_data.rename_columns({"translation.de":"de","translation.en":"en"})
 
-    dataset = datasets.load_dataset("bentrevett/multi30k")
-    print("Multi30k Dataset Loaded")
-
-    # train,validation, and test sets of examples
-    train_data = dataset["train"]
-    valid_data = dataset["validation"]
-    test_data = dataset["test"]
-
+    if TRAIN:
+        train_data = load_data(DATASET,"train",count=TRAINING_EXAMPLES)
+        valid_data = load_data(DATASET,"validation")
+    else:
+        test_data = load_data(DATASET,"test")
 
     print("Dataset Loaded")
 
-
-    print(train_data.column_names)
-
-    #given an example (and the other arguments) returns the tokenized example with a sos and eos token added
-    def tokenize_example(example, en_nlp, de_nlp, max_length, sos_token, eos_token):
-        #tokenizes and lowercases every example
-        en_tokens = [token.text.lower() for token in en_nlp.tokenizer(example["en"])][:max_length]
-        de_tokens = [token.text.lower() for token in de_nlp.tokenizer(example["de"])][:max_length]
-        #adds sos and eos tokens to the beginning and end
-        en_tokens = [sos_token] + en_tokens + [eos_token]
-        de_tokens = [sos_token] + de_tokens + [eos_token]
-        #creates new column in given datasets for this
-        return {"en_tokens": en_tokens, "de_tokens": de_tokens}
-
-    #the arguments for the above function
-    fn_kwargs = {
+    #the arguments for the tokeniz_example function used below
+    tokenize_kwargs = {
         "en_nlp": spacy_en,
         "de_nlp": spacy_de,
         "max_length": 100,
@@ -86,90 +68,99 @@ if __name__=="__main__":
     }
 
     #tokenizes the datasets
-    train_data = train_data.map(tokenize_example, fn_kwargs=fn_kwargs)
-    valid_data = valid_data.map(tokenize_example, fn_kwargs=fn_kwargs)
-    test_data = test_data.map(tokenize_example, fn_kwargs=fn_kwargs)
+    if TRAIN:
+        train_data = train_data.map(tokenize_example, fn_kwargs=tokenize_kwargs)
+        valid_data = valid_data.map(tokenize_example, fn_kwargs=tokenize_kwargs)
+    else:
+        test_data = test_data.map(tokenize_example, fn_kwargs=tokenize_kwargs)
 
-    #english vocabulary generated from training data.
-    en_vocab = build_vocab_from_iterator(
-        train_data["en_tokens"],
-        #min_freq=2,
-        specials=[
-            "<unk>", #unknown token
-            "<pad>", #padding token
-            "<sos>", #start of sentence
-            "<eos>", #end of sentence
-        ],
-        min_freq=2
-    )
+    if TRAIN:
+        #english vocabulary generated from training data.
+        en_vocab = build_vocab_from_iterator(
+            train_data["en_tokens"],
+            #min_freq=2,
+            specials=[
+                "<unk>", #unknown token
+                "<pad>", #padding token
+                "<sos>", #start of sentence
+                "<eos>", #end of sentence
+            ],
+            min_freq=2
+        )
 
-    #german vocabulary generated from training data. only includes words with multiple occurences
-    de_vocab = build_vocab_from_iterator(
-        train_data["de_tokens"],
-        #min_freq=2,
-        specials=[
-            "<unk>", #unknown token
-            "<pad>", #padding token
-            "<sos>", #start of sentence
-            "<eos>", #end of sentence
-        ],
-        min_freq=2
-    )
+        #german vocabulary generated from training data. only includes words with multiple occurences
+        de_vocab = build_vocab_from_iterator(
+            train_data["de_tokens"],
+            #min_freq=2,
+            specials=[
+                "<unk>", #unknown token
+                "<pad>", #padding token
+                "<sos>", #start of sentence
+                "<eos>", #end of sentence
+            ],
+            min_freq=2
+        )
 
-    print(len(en_vocab))
-    print(len(de_vocab))
+        # indices for unknown tokens and padding tokens
+        unk_index = en_vocab["<unk>"]
+        pad_index = en_vocab["<pad>"]
 
-    #indices for unknown tokens and padding tokens
-    unk_index = en_vocab["<unk>"]
-    pad_index = en_vocab["<pad>"]
+        # standardizes the default (unknown token) index
+        en_vocab.set_default_index(unk_index)
+        de_vocab.set_default_index(unk_index)
 
-    #standardizes the default (unknown token) index
-    en_vocab.set_default_index(unk_index)
-    de_vocab.set_default_index(unk_index)
+        os.makedirs(os.path.join("models", MODEL_NAME), exist_ok=True)
+        torch.save(en_vocab, os.path.join("models", MODEL_NAME, "en_vocab.pt"))
+        torch.save(de_vocab, os.path.join("models", MODEL_NAME, "de_vocab.pt"))
+    else:
+
+        en_vocab = torch.load(os.path.join("models", MODEL_NAME, "en_vocab.pt"))
+        de_vocab = torch.load(os.path.join("models", MODEL_NAME, "de_vocab.pt"))
+
+        unk_index = en_vocab["<unk>"]
+        pad_index = en_vocab["<pad>"]
 
 
-    #generates list of vocab indices for each token in an example
-    def numericalize_example(example):
-        en_ids = en_vocab.lookup_indices(example["en_tokens"])
-        de_ids = de_vocab.lookup_indices(example["de_tokens"])
-        #makes new column in dataset for this
-        return {"en_ids":en_ids,"de_ids":de_ids}
+    print(f"English Vocab: {len(en_vocab)} words")
+    print(f"German Vocab: {len(de_vocab)} words")
+
+
+
+    numericalize_kwargs = {
+        "en_vocab": en_vocab,
+        "de_vocab": de_vocab
+    }
+
 
     #numericalizes all data
-    train_data = train_data.map(numericalize_example)
-    valid_data = valid_data.map(numericalize_example)
-    test_data = test_data.map(numericalize_example)
+    if TRAIN:
+        train_data = train_data.map(numericalize_example,fn_kwargs=numericalize_kwargs)
+        valid_data = valid_data.map(numericalize_example,fn_kwargs=numericalize_kwargs)
+    else:
+        test_data = test_data.map(numericalize_example,fn_kwargs=numericalize_kwargs)
 
     #converts all data to torch tensors
-    train_data=train_data.with_format(type="torch", output_all_columns=True)
-    valid_data=valid_data.with_format(type="torch", output_all_columns=True)
-    test_data=test_data.with_format(type="torch", output_all_columns=True)
+    if TRAIN:
+        train_data=train_data.with_format(type="torch", output_all_columns=True)
+        valid_data=valid_data.with_format(type="torch", output_all_columns=True)
+    else:
+        test_data=test_data.with_format(type="torch", output_all_columns=True)
 
     print("Data Preprocessing Done")
 
 
-
-    #returns a data loader for the given dataset
-    def get_loader(data,batch_size,shuffle=False):
-        return torch.utils.data.DataLoader(
-            dataset=data,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            #the preprocessing function
-            collate_fn=collate,
-            pin_memory=True,
-            num_workers=2,
-            persistent_workers=True
-        )
-
     BATCH_SIZE = 128
     #number of iterations per epoch in traing is roughly 32,000/BATCH_SIZE as the loader will go through all 30k-ish examples
 
+    collate_fn = partial(collate, pad_index=pad_index)
+
     #creates loaders for all data sets
     #only shuffles the training dataset
-    train_loader = get_loader(train_data,batch_size=BATCH_SIZE,shuffle=True)
-    valid_loader = get_loader(valid_data,batch_size=BATCH_SIZE,shuffle=False)
-    test_loader = get_loader(test_data,batch_size=BATCH_SIZE,shuffle=False)
+    if TRAIN:
+        train_loader = get_loader(train_data,batch_size=BATCH_SIZE,shuffle=True,collate=collate_fn)
+        valid_loader = get_loader(valid_data,batch_size=BATCH_SIZE,shuffle=False,collate=collate_fn)
+    else:
+        test_loader = get_loader(test_data,batch_size=BATCH_SIZE,shuffle=False,collate=collate_fn)
 
 
     # one hot and prediction vector lengths
@@ -194,10 +185,6 @@ if __name__=="__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
-    # to train or not to train
-    TRAIN = False
-
-    print("Model Created")
 
 
     # initializes the weights of the model to random ones
@@ -299,6 +286,8 @@ if __name__=="__main__":
         # the actual model sent to appropriate device
         model = Seq2Seq(encoder, decoder, device).to(device)
 
+        print("Model Created")
+
         model.apply(initialize)
 
         print("Model Weights Initialized")
@@ -333,7 +322,8 @@ if __name__=="__main__":
             # if this epoch got the best validation loss so far, save this version of the model
             if valid_loss < best_loss:
                 best_loss = valid_loss
-                torch.save(model, "de_to_en_bdrnn.pt")
+                os.makedirs(os.path.join("models",MODEL_NAME), exist_ok=True)
+                torch.save(model, os.path.join("models",MODEL_NAME,MODEL_NAME+".pt"))
 
             # displays the loss info
             print(f"Train Loss: {train_loss}")
@@ -342,7 +332,7 @@ if __name__=="__main__":
         exit()
 
     # loading the model if not training
-    model = torch.load("de_to_en_bdrnn.pt")
+    model = torch.load(os.path.join("models",MODEL_NAME,MODEL_NAME+".pt"))
 
     criterion = nn.CrossEntropyLoss(ignore_index=pad_index)
 
