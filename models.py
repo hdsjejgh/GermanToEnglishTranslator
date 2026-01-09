@@ -125,7 +125,7 @@ class Seq2Seq(nn.Module):
 
             return outputs
 
-
+#like the original encoder just bidirectional
 class BidirectionalEncoder(nn.Module):
     def __init__(self, input_dim, embedding_dim, hidden_dim, layers, dropout):
         super().__init__()
@@ -133,9 +133,13 @@ class BidirectionalEncoder(nn.Module):
         self.input_dim = input_dim
         # dimension of embeddings
         self.embedding_dim = embedding_dim
-        self.embedding = nn.Embedding(self.input_dim, self.embedding_dim)
+        #number of layers
         self.layers = layers
+        #hidden and cell state dimensions
         self.hidden_dim = hidden_dim
+
+        #necessary layers
+        self.embedding = nn.Embedding(self.input_dim, self.embedding_dim)
         self.lstm = nn.LSTM(
             input_size=embedding_dim,
             hidden_size=hidden_dim,
@@ -143,6 +147,7 @@ class BidirectionalEncoder(nn.Module):
             batch_first=False,
             bidirectional=True
         )
+        #to convert the output of the lstm into the shape of the input of the decoder
         self.fc_h = nn.Linear(self.hidden_dim*2, hidden_dim)
         self.fc_c = nn.Linear(self.hidden_dim * 2, hidden_dim)
 
@@ -154,6 +159,7 @@ class BidirectionalEncoder(nn.Module):
         out, (h,c) = self.lstm(emb)
 
         #reorders so that all the values for one direction are together in their respective halves
+        #doesnt have to be done but just in case i need them like this in the future
         h = torch.cat((h[0::2], h[1::2]), dim=2)
         c = torch.cat((c[0::2], c[1::2]), dim=2)
 

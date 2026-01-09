@@ -6,7 +6,7 @@ import torchtext
 import os
 from data import *
 from functools import partial
-
+import evaluate as eval
 #to stop torchtext from complaining every time i run it
 torchtext.disable_torchtext_deprecation_warning()
 from torchtext.vocab import build_vocab_from_iterator
@@ -17,7 +17,7 @@ mp.freeze_support()
 
 #returns an appropriately padded batch of sequences from given batch of english and german examples
 #the preprocessing function for the loader
-
+#has to be outside the main conditional so that it doesn't break the multiprocessing workers
 def collate(batch,pad_index):
     #gets the english and german token ids for each example
     en = [ex["en_ids"] for ex in batch]
@@ -33,7 +33,8 @@ def collate(batch,pad_index):
 
 if __name__=="__main__":
 
-    DATASET = "wmt14"
+    #currently supported datasets: multi30k, wmt14
+    DATASET = "multi30k"
     # to train or not to train
     TRAIN = False
     #number of training examples to use for larger datasets
@@ -49,10 +50,11 @@ if __name__=="__main__":
     spacy_de = spacy.load('de_core_news_sm')
     print("Tokenizers Loaded")
 
-
+    #the training and validation datasets are only loaded when training
     if TRAIN:
         train_data = load_data(DATASET,"train",count=TRAINING_EXAMPLES)
         valid_data = load_data(DATASET,"validation")
+    #the testing dataset is only loaded when testing (obviously)
     else:
         test_data = load_data(DATASET,"test")
 
@@ -63,8 +65,6 @@ if __name__=="__main__":
         "en_nlp": spacy_en,
         "de_nlp": spacy_de,
         "max_length": 100,
-        "sos_token": "<sos>",
-        "eos_token": "<eos>",
     }
 
     #tokenizes the datasets
@@ -109,14 +109,18 @@ if __name__=="__main__":
         en_vocab.set_default_index(unk_index)
         de_vocab.set_default_index(unk_index)
 
+        #makes directory model/model_name to save the vocabs in based on the model name
         os.makedirs(os.path.join("models", MODEL_NAME), exist_ok=True)
+        #saves vocabs in models/model_name
         torch.save(en_vocab, os.path.join("models", MODEL_NAME, "en_vocab.pt"))
         torch.save(de_vocab, os.path.join("models", MODEL_NAME, "de_vocab.pt"))
     else:
 
+        #loads the vocabs from the models/model_name directory
         en_vocab = torch.load(os.path.join("models", MODEL_NAME, "en_vocab.pt"))
         de_vocab = torch.load(os.path.join("models", MODEL_NAME, "de_vocab.pt"))
 
+        #retrieve the unknown and padding tokens
         unk_index = en_vocab["<unk>"]
         pad_index = en_vocab["<pad>"]
 
@@ -124,13 +128,11 @@ if __name__=="__main__":
     print(f"English Vocab: {len(en_vocab)} words")
     print(f"German Vocab: {len(de_vocab)} words")
 
-
-
+    #the key word arguments for the numericalize function used below
     numericalize_kwargs = {
         "en_vocab": en_vocab,
         "de_vocab": de_vocab
     }
-
 
     #numericalizes all data
     if TRAIN:
@@ -148,10 +150,10 @@ if __name__=="__main__":
 
     print("Data Preprocessing Done")
 
-
     BATCH_SIZE = 128
-    #number of iterations per epoch in traing is roughly 32,000/BATCH_SIZE as the loader will go through all 30k-ish examples
+    # number of iterations per epoch in traing is roughly total samples/BATCH_SIZE
 
+    #locks the pad index parameter in collate so the workers in the loaders can use the retrieved pad index and pickle it
     collate_fn = partial(collate, pad_index=pad_index)
 
     #creates loaders for all data sets
@@ -161,7 +163,6 @@ if __name__=="__main__":
         valid_loader = get_loader(valid_data,batch_size=BATCH_SIZE,shuffle=False,collate=collate_fn)
     else:
         test_loader = get_loader(test_data,batch_size=BATCH_SIZE,shuffle=False,collate=collate_fn)
-
 
     # one hot and prediction vector lengths
     input_dim = len(de_vocab)
@@ -184,7 +185,6 @@ if __name__=="__main__":
     # device is the gpu if possible
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
-
 
 
     # initializes the weights of the model to random ones
@@ -331,7 +331,7 @@ if __name__=="__main__":
 
         exit()
 
-    # loading the model if not training
+    # loading the model if not training from the directory models/model_name
     model = torch.load(os.path.join("models",MODEL_NAME,MODEL_NAME+".pt"))
 
     criterion = nn.CrossEntropyLoss(ignore_index=pad_index)
@@ -339,35 +339,80 @@ if __name__=="__main__":
     test_loss = evaluate(model, test_loader, criterion, device)
     print(f"Test Loss: {test_loss}")
 
-
+    #given a sentence and model, runs the sentence through the model to translate it
     def translate_sentence(
             sentence,
             model,
-            en_tokenizer,
-            de_tokenizer,
-            en_vocab,
-            de_vocab,
-            device,
-            max_output_length,
+            max_output_length=25,
     ):
+        #puts model in evaluation mode for speed
         model.eval()
         with torch.no_grad():
-            tokens = [token.text for token in de_tokenizer.tokenizer(sentence)]
+            #tokenizes, lowercases, and adds <sos> and <eos> tokens to the sentence
+            tokens = [token.text for token in spacy_de.tokenizer(sentence)]
             tokens = [token.lower() for token in tokens]
             tokens = ["<sos>"] + tokens + ["<eos>"]
+            #gets the indices from the vocab
             ids = de_vocab.lookup_indices(tokens)
+            #corrects the ids shape and makes it a tensor
             tensor = torch.LongTensor(ids).unsqueeze(-1).to(device)
+
+
             hidden, cell = model.encoder(tensor)
+            #the previous token is input each step, starting with the start of sentence token (in id form)
             inputs = en_vocab.lookup_indices(["<sos>"])
+
+            #keeps generating words until maximum length is reached or end of sentence token is generated
             for i in range(max_output_length):
+                #input is the last word generated
                 inputs_tensor = torch.LongTensor([inputs[-1]]).to(device)
+
                 output, (hidden, cell) = model.decoder(inputs_tensor, hidden, cell)
+
+                #gets predicted word (in token form)
                 predicted_token = output.argmax(-1).item()
                 inputs.append(predicted_token)
+
                 if predicted_token == en_vocab["<eos>"]:
                     break
+
+            #coverts all the token ids to the actual tokens
             tokens = en_vocab.lookup_tokens(inputs)
         return tokens
 
-    # A man in an orange hat starring at something.
-    print(translate_sentence('Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt.', model, spacy_en, spacy_de, en_vocab, de_vocab, device, 25))
+
+    #Two sample german sentences
+
+    # A man in an orange hat staring at something.
+    print(translate_sentence('Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt.', model))
+    # A man is watching a film
+    print(translate_sentence("Ein Mann sitzt auf einer Bank.", model))
+
+    #translates every sentence in the test data
+    translations = [
+        translate_sentence(
+            example["de"],
+            model,
+        )
+        for example in tqdm.tqdm(test_data)
+    ]
+
+    #bleu metric for evaluating
+    bleu = eval.load("bleu")
+
+    #Turns predictions into actual sentences with spaces between tokens and no sos/eos tokens
+    predictions = [" ".join(translation[1:-1]) for translation in translations]
+    #the true values
+    references = [[example["en"]] for example in test_data]
+
+    #tokenizes a given sentence and lowercases
+    def tokenizer_fn(s):
+        tokens = [token.text for token in spacy_en.tokenizer(s)]
+        tokens = [token.lower() for token in tokens]
+        return tokens
+
+    #prints: Bleu score, precisions, brevity penalty, length ratio, translation length, and reference length
+    results = bleu.compute(
+        predictions=predictions, references=references, tokenizer=tokenizer_fn
+    )
+    print(results)
