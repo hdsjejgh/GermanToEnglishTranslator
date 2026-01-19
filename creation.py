@@ -34,16 +34,16 @@ def collate(batch,pad_index):
 if __name__=="__main__":
 
     #currently supported datasets: multi30k, wmt14
-    DATASET = "multi30k"
+    DATASET = "wmt14"
     # to train or not to train
     TRAIN = False
     #number of training examples to use for larger datasets
     #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
-    TRAINING_EXAMPLES = 50_000
+    TRAINING_EXAMPLES = 30_000
     #name of model directory
     #saves model and vocab here if TRAIN = True
     #loads model and vocab from here if TRAIN = False
-    MODEL_NAME = "de_to_en_bdrnn"
+    MODEL_NAME = "de_to_en_attention"
 
     #small scale tokenizers for english and german
     spacy_en = spacy.load('en_core_web_sm')
@@ -85,7 +85,7 @@ if __name__=="__main__":
                 "<sos>", #start of sentence
                 "<eos>", #end of sentence
             ],
-            min_freq=2
+            min_freq=3
         )
 
         #german vocabulary generated from training data. only includes words with multiple occurences
@@ -98,7 +98,7 @@ if __name__=="__main__":
                 "<sos>", #start of sentence
                 "<eos>", #end of sentence
             ],
-            min_freq=2
+            min_freq=3
         )
 
         # indices for unknown tokens and padding tokens
@@ -211,7 +211,7 @@ if __name__=="__main__":
             # calculates predictions based on source
             output = model(src, trg, tf_ratio)
 
-            output = output[1:].view(-1, output_dim)
+            output = output.view(-1, output_dim)
             trg = trg[1:].view(-1)
 
             # calculates loss and gradients
@@ -243,7 +243,7 @@ if __name__=="__main__":
 
                 # calculates predictions without teacher forcing
                 output = model(src, trg, 1.0)
-                trg = trg[1:]
+                trg = trg[1:].view(-1)
 
                 loss = criterion(
                     output.reshape(-1, output_dim),
@@ -275,7 +275,7 @@ if __name__=="__main__":
         )
 
         # the decoder
-        decoder = Decoder(
+        decoder = AttentionDecoder(
             output_dim=output_dim,
             hidden_dim=hidden_dim,
             embedding_dim=dec_emb_dim,
@@ -358,7 +358,7 @@ if __name__=="__main__":
             tensor = torch.LongTensor(ids).unsqueeze(-1).to(device)
 
 
-            hidden, cell = model.encoder(tensor)
+            o,hidden, cell = model.encoder(tensor)
             #the previous token is input each step, starting with the start of sentence token (in id form)
             inputs = en_vocab.lookup_indices(["<sos>"])
 
@@ -367,7 +367,7 @@ if __name__=="__main__":
                 #input is the last word generated
                 inputs_tensor = torch.LongTensor([inputs[-1]]).to(device)
 
-                output, (hidden, cell) = model.decoder(inputs_tensor, hidden, cell)
+                output, (hidden, cell) = model.decoder(inputs_tensor, hidden, cell,enc_states=o)
 
                 #gets predicted word (in token form)
                 predicted_token = output.argmax(-1).item()

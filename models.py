@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import random
 import torchtext
+from torch.nn.functional import softmax
+
 #to stop torchtext from complaining every time i run it
 torchtext.disable_torchtext_deprecation_warning()
 
@@ -32,7 +34,7 @@ class Encoder(nn.Module):
         # tokens input into an rnn
         emb = self.dropout(self.embedding(source))
         o, (h, c) = self.rnn(emb)
-        return h, c
+        return o, h, c
 
 
 # Decoder class for the second half of the rnn
@@ -54,7 +56,7 @@ class Decoder(nn.Module):
         self.fc = nn.Linear(self.hidden_dim, self.output_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, inp, hidden, cell):
+    def forward(self, inp, hidden, cell,**kwargs):
         # token input ->
         # unsqueezed into new shape ->
         # embedded into vector ->
@@ -87,11 +89,11 @@ class Seq2Seq(nn.Module):
         trg_length, batch_size = trg.shape
         trg_vocab_size = self.decoder.output_dim
 
-        if tf_ratio!=1:
+        if tf_ratio!=1 or isinstance(self.decoder,AttentionDecoder):
             # zero vector which will store prediction vectors for each example
-            outputs = torch.zeros(trg_length, batch_size, trg_vocab_size).to(self.device)
+            outputs = torch.zeros(trg_length-1, batch_size, trg_vocab_size).to(self.device)
             # hidden and cells gotten from the encoder
-            h, c = self.encoder(src)
+            o, h, c = self.encoder(src)
             # input is sos tokens for the first column
             inp = trg[0, :]
 
@@ -99,20 +101,24 @@ class Seq2Seq(nn.Module):
             # first item is ignored in evaluation to compensate
             for t in range(1, trg_length):
                 # gets output, hidden, and cell from first column of decoder
-                o, (h, c) = self.decoder(inp, h, c)
+                pred, (h, c) = self.decoder(
+                    inp, h, c, enc_states=o
+                )
                 # sets outputs vector appropriately
-                outputs[t] = o
+                outputs[t-1] = pred
                 # top = the chosen token index
-                top = o.argmax(1)
+                top = pred.argmax(1)
                 # the next input is either the correct input or the prediction depending on if teacher forcing or not
                 inp = trg[t] if random.random() < tf_ratio else top
             return outputs
         else:
-            h, c = self.encoder(src)
+            o, h, c = self.encoder(src)
 
             #[trg_len - 1, batch]
             #for teacher forcing
             trg_input = trg[:-1]
+
+
 
             emb = self.decoder.dropout(
                 self.decoder.embedding(trg_input)
@@ -166,4 +172,59 @@ class BidirectionalEncoder(nn.Module):
         h = torch.tanh(self.fc_h(h))
         c = torch.tanh(self.fc_c(c))
 
-        return h, c
+        return out,h, c
+
+# like the original decoder just using attention
+class AttentionDecoder(nn.Module):
+    def __init__(self, output_dim, hidden_dim, embedding_dim, layers, dropout):
+        super().__init__()
+        # output dimension of the prediction vectors (ie, the english vocab length)
+        self.output_dim = output_dim
+        # hidden and cell vector dimension
+        self.hidden_dim = hidden_dim
+        # embedding vector dimension
+        self.embedding_dim = embedding_dim
+        # number of layers for the rnn
+        self.layers = layers
+
+        # necessary layers
+        self.embedding = nn.Embedding(self.output_dim, self.embedding_dim)
+        self.rnn = nn.LSTM(self.hidden_dim *2 + self.embedding_dim, self.hidden_dim, layers, dropout=dropout)
+
+        self.energy = nn.Linear(self.hidden_dim*3,1)
+        self.softmax = nn.Softmax(dim=0)
+        self.relu = nn.ReLU()
+
+        self.fc = nn.Linear(self.hidden_dim, self.output_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, inp, hidden, cell, enc_states):
+        # token input ->
+        # unsqueezed into new shape ->
+        # embedded into vector ->
+        # dropout applied to individual dimensions ->
+        # the embed, hidden, and cell vectors (from previous rnn) get passed through new rnn ->
+        # output is unsqueezed to correct shape ->
+        # output is put through a dense linear layer to predict
+        inp = inp.unsqueeze(0)
+        emb = self.dropout(self.embedding(inp))
+
+        seq_length = enc_states.shape[0]
+        h_top = hidden[-1].unsqueeze(0)
+        h_reshaped = h_top.repeat(seq_length, 1, 1)
+
+        energy = self.relu(self.energy(torch.cat((h_reshaped,enc_states),dim=2)))
+        attention = softmax(energy)
+
+        attention = attention.permute(1,2,0)
+        enc_states = enc_states.permute(1,0,2)
+
+        context = torch.bmm(attention,enc_states).permute(1,0,2)
+
+        rnn_input = torch.cat((context,emb),dim=2)
+
+        o, (h, c) = self.rnn(rnn_input, (hidden, cell))
+        o = o.squeeze(0)
+        pred = self.fc(o)
+        return pred, (h, c)
+
