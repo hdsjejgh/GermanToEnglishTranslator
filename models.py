@@ -3,6 +3,7 @@ import torch.nn as nn
 import random
 import torchtext
 from torch.nn.functional import softmax
+import math
 
 #to stop torchtext from complaining every time i run it
 torchtext.disable_torchtext_deprecation_warning()
@@ -228,3 +229,37 @@ class AttentionDecoder(nn.Module):
         pred = self.fc(o)
         return pred, (h, c)
 
+
+#transformer stuff
+
+class CustomTransformer(nn.Module):
+    def __init__(self,input_dim,output_dim,d_model,nhead,layers,dropout,device):
+        super().__init__()
+
+        self.device = device
+
+        self.enc_embedding = nn.Embedding(input_dim, d_model)
+        self.dec_embedding = nn.Embedding(output_dim, d_model)
+        self.dropout = nn.Dropout(dropout)
+
+        #self.input_projection = nn.Linear(input_dim,d_model)
+        self.output_projection = nn.Linear(d_model,output_dim)
+
+        self.transformer= nn.Transformer(
+                         d_model=d_model,
+                         nhead=nhead,
+                         num_encoder_layers=layers,
+                         num_decoder_layers=layers,
+                         )
+
+    def forward(self,src,target,*args,**kwargs):
+
+        emb = self.dropout(self.enc_embedding(src))
+
+        trg_emb = self.dropout(
+            self.dec_embedding(target[:-1])
+        )
+
+        y = self.transformer(emb,trg_emb)
+        projected_y = self.output_projection(y)
+        return projected_y

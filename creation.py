@@ -1,3 +1,5 @@
+from torch.nn.functional import dropout
+
 from models import *
 import torch.nn as nn
 import torch.optim as optim
@@ -34,16 +36,16 @@ def collate(batch,pad_index):
 if __name__=="__main__":
 
     #currently supported datasets: multi30k, wmt14
-    DATASET = "wmt14"
+    DATASET = "multi30k"
     # to train or not to train
-    TRAIN = False
+    TRAIN = True
     #number of training examples to use for larger datasets
     #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
     TRAINING_EXAMPLES = 30_000
     #name of model directory
     #saves model and vocab here if TRAIN = True
     #loads model and vocab from here if TRAIN = False
-    MODEL_NAME = "de_to_en_attention"
+    MODEL_NAME = "de_to_en_transformer"
 
     #small scale tokenizers for english and german
     spacy_en = spacy.load('en_core_web_sm')
@@ -173,10 +175,10 @@ if __name__=="__main__":
     dec_emb_dim = 256
 
     # dimension of the hidden and cell vectors
-    hidden_dim = 512
+    hidden_dim = 1024
 
     # layers (rows) in the rnn
-    layers = 2
+    layers = 4
 
     # dropout percentage during training for the encoder and decoder
     enc_dropout = .5
@@ -284,7 +286,17 @@ if __name__=="__main__":
         )
 
         # the actual model sent to appropriate device
-        model = Seq2Seq(encoder, decoder, device).to(device)
+        #model = Seq2Seq(encoder, decoder, device).to(device)
+
+        model = CustomTransformer(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            d_model=hidden_dim,
+            nhead=8,
+            layers=layers,
+            dropout=enc_dropout,
+            device=device
+        ).to(device)
 
         print("Model Created")
 
