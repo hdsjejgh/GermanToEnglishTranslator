@@ -84,7 +84,7 @@ class Seq2Seq(nn.Module):
         # the device the model is running on
         self.device = device
 
-    def forward(self, src, trg, tf_ratio=0.0):
+    def forward(self, src, trg, tf_ratio=0.0,**kwargs):
         # tf_ratio is chance to use teacher forcing each time
 
         trg_length, batch_size = trg.shape
@@ -232,11 +232,35 @@ class AttentionDecoder(nn.Module):
 
 #transformer stuff
 
+#positional encoding from the pytorch docs
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
+#####
+
 class CustomTransformer(nn.Module):
     def __init__(self,input_dim,output_dim,d_model,nhead,layers,dropout,device):
         super().__init__()
 
+        self.d_model = d_model
+
         self.device = device
+
+        self.pos = PositionalEncoding(d_model, dropout)
 
         self.enc_embedding = nn.Embedding(input_dim, d_model)
         self.dec_embedding = nn.Embedding(output_dim, d_model)
@@ -245,6 +269,8 @@ class CustomTransformer(nn.Module):
         #self.input_projection = nn.Linear(input_dim,d_model)
         self.output_projection = nn.Linear(d_model,output_dim)
 
+
+
         self.transformer= nn.Transformer(
                          d_model=d_model,
                          nhead=nhead,
@@ -252,14 +278,25 @@ class CustomTransformer(nn.Module):
                          num_decoder_layers=layers,
                          )
 
-    def forward(self,src,target,*args,**kwargs):
+    def forward(self,src,target,pad_index=1,*args,**kwargs):
 
-        emb = self.dropout(self.enc_embedding(src))
-
-        trg_emb = self.dropout(
-            self.dec_embedding(target[:-1])
+        emb = self.dropout(
+            self.pos(
+                self.enc_embedding(src) * math.sqrt(self.d_model)
+            )
         )
 
-        y = self.transformer(emb,trg_emb)
+        trg_emb = self.dropout(
+            self.pos(
+                self.dec_embedding(target[:-1]) * math.sqrt(self.d_model)
+            )
+        )
+
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(target.size(0)-1,device=self.device)
+
+        src_key_padding_mask = (src == pad_index).transpose(0, 1)
+        tgt_key_padding_mask = (target[:-1] == pad_index).transpose(0, 1)
+
+        y = self.transformer(emb,trg_emb,tgt_is_causal=True,src_key_padding_mask=src_key_padding_mask,tgt_key_padding_mask=tgt_key_padding_mask,tgt_mask=tgt_mask)
         projected_y = self.output_projection(y)
         return projected_y

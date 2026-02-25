@@ -211,7 +211,8 @@ if __name__=="__main__":
             optimizer.zero_grad()
 
             # calculates predictions based on source
-            output = model(src, trg, tf_ratio)
+
+            output = model(src, trg, tf_ratio=tf_ratio,pad_index=pad_index)
 
             output = output.view(-1, output_dim)
             trg = trg[1:].view(-1)
@@ -244,7 +245,7 @@ if __name__=="__main__":
                 trg = batch["en_ids"].to(device)
 
                 # calculates predictions without teacher forcing
-                output = model(src, trg, 1.0)
+                output = model(src, trg, tf_ratio=1.0, pad_index=pad_index)
                 trg = trg[1:].view(-1)
 
                 loss = criterion(
@@ -300,7 +301,7 @@ if __name__=="__main__":
 
         print("Model Created")
 
-        model.apply(initialize)
+        #model.apply(initialize)
 
         print("Model Weights Initialized")
 
