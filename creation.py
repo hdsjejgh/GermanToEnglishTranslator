@@ -1,5 +1,3 @@
-from torch.nn.functional import dropout
-
 from models import *
 import torch.nn as nn
 import torch.optim as optim
@@ -36,12 +34,12 @@ def collate(batch,pad_index):
 if __name__=="__main__":
 
     #currently supported datasets: multi30k, wmt14
-    DATASET = "multi30k"
+    DATASET = "wmt14"
     # to train or not to train
     TRAIN = True
     #number of training examples to use for larger datasets
     #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
-    TRAINING_EXAMPLES = 30_000
+    TRAINING_EXAMPLES = 100_000
     #name of model directory
     #saves model and vocab here if TRAIN = True
     #loads model and vocab from here if TRAIN = False
@@ -87,7 +85,7 @@ if __name__=="__main__":
                 "<sos>", #start of sentence
                 "<eos>", #end of sentence
             ],
-            min_freq=3
+            min_freq=2
         )
 
         #german vocabulary generated from training data. only includes words with multiple occurences
@@ -100,7 +98,7 @@ if __name__=="__main__":
                 "<sos>", #start of sentence
                 "<eos>", #end of sentence
             ],
-            min_freq=3
+            min_freq=2
         )
 
         # indices for unknown tokens and padding tokens
@@ -175,14 +173,14 @@ if __name__=="__main__":
     dec_emb_dim = 256
 
     # dimension of the hidden and cell vectors
-    hidden_dim = 1024
+    hidden_dim = 512
 
     # layers (rows) in the rnn
-    layers = 4
+    layers = 3
 
     # dropout percentage during training for the encoder and decoder
-    enc_dropout = .5
-    dec_dropout = .5
+    enc_dropout = .25
+    dec_dropout = .25
 
     # device is the gpu if possible
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -195,6 +193,8 @@ if __name__=="__main__":
             nn.init.uniform_(param.data, -0.08, 0.08)
 
 
+    scaler = torch.cuda.amp.GradScaler()
+
     # trains the model for one epoch
     def train(model, loader, optimizer, criterion, clip, tf_ratio, device):
         # puts the model in train mode
@@ -203,7 +203,7 @@ if __name__=="__main__":
         epoch_loss = 0
 
         for i, batch in enumerate(loader):
-            print(i)
+            if i%25==0: print(i)
             src = batch["de_ids"].to(device)
             trg = batch["en_ids"].to(device)
 
@@ -212,19 +212,21 @@ if __name__=="__main__":
 
             # calculates predictions based on source
 
-            output = model(src, trg, tf_ratio=tf_ratio,pad_index=pad_index)
+            with torch.cuda.amp.autocast():
+                output = model(src, trg, tf_ratio=tf_ratio,pad_index=pad_index)
 
-            output = output.view(-1, output_dim)
-            trg = trg[1:].view(-1)
+                output = output.view(-1, output_dim)
+                trg = trg[1:].view(-1)
 
-            # calculates loss and gradients
-            loss = criterion(output, trg)
-            loss.backward()
-            # clips gradient in order to stop exploding gradient
-            torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+                # calculates loss and gradients
+                loss = criterion(output, trg)
+                scaler.scale(loss).backward()
+                # clips gradient in order to stop exploding gradient
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
 
             # updates parameters
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
             # adds loss this batch to total loss
             epoch_loss += loss.item()
         # returns the average loss per batch
@@ -293,7 +295,7 @@ if __name__=="__main__":
             input_dim=input_dim,
             output_dim=output_dim,
             d_model=hidden_dim,
-            nhead=8,
+            nhead=4,
             layers=layers,
             dropout=enc_dropout,
             device=device
@@ -306,8 +308,13 @@ if __name__=="__main__":
         print("Model Weights Initialized")
 
         # optimizer for the training and criterion for evaluation (and training)
-        optimizer = optim.Adam(model.parameters())
-        criterion = nn.CrossEntropyLoss(ignore_index=pad_index)
+        optimizer = optim.AdamW(model.parameters(), lr=3e-4)
+
+
+        criterion = nn.CrossEntropyLoss(
+                                        ignore_index=pad_index,
+                                        label_smoothing=0.1,
+                                        )
 
         print("Beginning Training:")
 
@@ -324,6 +331,8 @@ if __name__=="__main__":
                 tf_ratio=tf_ratio,
                 device=device
             )
+
+
             # runs through the validation set and gets the loss (~1k examples)
             valid_loss = evaluate(
                 model=model,

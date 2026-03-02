@@ -276,6 +276,9 @@ class CustomTransformer(nn.Module):
                          nhead=nhead,
                          num_encoder_layers=layers,
                          num_decoder_layers=layers,
+                         dim_feedforward=2048,
+                         dropout = dropout,
+                         batch_first = False,
                          )
 
     def forward(self,src,target,pad_index=1,*args,**kwargs):
