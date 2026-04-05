@@ -36,7 +36,7 @@ if __name__=="__main__":
     #currently supported datasets: multi30k, wmt14
     DATASET = "wmt14"
     # to train or not to train
-    TRAIN = True
+    TRAIN = False
     #number of training examples to use for larger datasets
     #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
     TRAINING_EXAMPLES = 100_000
@@ -402,17 +402,42 @@ if __name__=="__main__":
             tokens = en_vocab.lookup_tokens(inputs)
         return tokens
 
+    def translate_with_transformer(sentence,model,max_output_length=25):
+        model.eval()
+        with torch.no_grad():
+            tokens = [token.text for token in spacy_de.tokenizer(sentence)]
+            tokens = [token.lower() for token in tokens]
+            tokens = ["<sos>"] + tokens + ["<eos>"]
+            ids = de_vocab.lookup_indices(tokens)
+            tensor = torch.LongTensor(ids).unsqueeze(-1).to(device)
+            trg_ids = [en_vocab["<sos>"]]
+
+            for i in range(max_output_length):
+                trg_tensor = torch.LongTensor(trg_ids).unsqueeze(-1).to(device)
+
+                output = model(tensor, trg_tensor,pad_index)
+                next_token = output[-1, 0].argmax(-1).item()
+
+                trg_ids.append(next_token)
+
+                if next_token == en_vocab["<eos>"]:
+                    break
+            trg_tokens = en_vocab.lookup_tokens(trg_ids)
+        return trg_tokens
+
+
+
 
     #Two sample german sentences
 
     # A man in an orange hat staring at something.
-    print(translate_sentence('Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt.', model))
+    print(translate_with_transformer('Ein Mann mit einem orangefarbenen Hut, der etwas anstarrt.', model))
     # A man is watching a film
-    print(translate_sentence("Ein Mann sitzt auf einer Bank.", model))
+    print(translate_with_transformer("Ein Mann sitzt auf einer Bank.", model))
 
     #translates every sentence in the test data
     translations = [
-        translate_sentence(
+        translate_with_transformer(
             example["de"],
             model,
         )
