@@ -36,14 +36,14 @@ if __name__=="__main__":
     #currently supported datasets: multi30k, wmt14
     DATASET = "wmt14"
     # to train or not to train
-    TRAIN = False
+    TRAIN = True
     #number of training examples to use for larger datasets
     #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
     TRAINING_EXAMPLES = 100_000
     #name of model directory
     #saves model and vocab here if TRAIN = True
     #loads model and vocab from here if TRAIN = False
-    MODEL_NAME = "de_to_en_transformer"
+    MODEL_NAME = "de_to_en_transformer_2"
 
     #small scale tokenizers for english and german
     spacy_en = spacy.load('en_core_web_sm')
@@ -213,7 +213,7 @@ if __name__=="__main__":
             # calculates predictions based on source
 
             with torch.cuda.amp.autocast():
-                output = model(src, trg, tf_ratio=tf_ratio,pad_index=pad_index)
+                output = model(src, trg[:-1], tf_ratio=tf_ratio,pad_index=pad_index)
 
                 output = output.view(-1, output_dim)
                 trg = trg[1:].view(-1)
@@ -247,7 +247,7 @@ if __name__=="__main__":
                 trg = batch["en_ids"].to(device)
 
                 # calculates predictions without teacher forcing
-                output = model(src, trg, tf_ratio=1.0, pad_index=pad_index)
+                output = model(src, trg[:-1], tf_ratio=1.0, pad_index=pad_index)
                 trg = trg[1:].view(-1)
 
                 loss = criterion(

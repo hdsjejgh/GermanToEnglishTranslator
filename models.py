@@ -250,6 +250,7 @@ class PositionalEncoding(nn.Module):
 
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
+
 #####
 
 class CustomTransformer(nn.Module):
@@ -289,20 +290,24 @@ class CustomTransformer(nn.Module):
             )
         )
 
-        if len(target)>1: trg_input = target[:-1]
-        else: trg_input = target
 
         trg_emb = self.dropout(
             self.pos(
-                self.dec_embedding(trg_input) * math.sqrt(self.d_model)
+                self.dec_embedding(target) * math.sqrt(self.d_model)
             )
         )
 
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(trg_input.size(0),device=self.device)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(target.size(0),device=self.device)
 
         src_key_padding_mask = (src == pad_index).transpose(0, 1)
-        tgt_key_padding_mask = (trg_input == pad_index).transpose(0, 1)
+        tgt_key_padding_mask = (target == pad_index).transpose(0, 1)
 
-        y = self.transformer(emb,trg_emb,tgt_is_causal=True,src_key_padding_mask=src_key_padding_mask,tgt_key_padding_mask=tgt_key_padding_mask,tgt_mask=tgt_mask)
+        y = self.transformer(emb,
+                             trg_emb,
+                             #tgt_is_causal=True,
+                             src_key_padding_mask=src_key_padding_mask,
+                             tgt_key_padding_mask=tgt_key_padding_mask,
+                             tgt_mask=tgt_mask,
+                             )
         projected_y = self.output_projection(y)
         return projected_y
