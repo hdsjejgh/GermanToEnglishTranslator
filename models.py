@@ -304,10 +304,11 @@ class CustomTransformer(nn.Module):
 
         y = self.transformer(emb,
                              trg_emb,
-                             #tgt_is_causal=True,
+                             tgt_is_causal=True,
                              src_key_padding_mask=src_key_padding_mask,
                              tgt_key_padding_mask=tgt_key_padding_mask,
                              tgt_mask=tgt_mask,
+                             memory_key_padding_mask=src_key_padding_mask
                              )
         projected_y = self.output_projection(y)
         return projected_y

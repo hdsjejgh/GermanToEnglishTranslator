@@ -13,7 +13,38 @@ from torchtext.vocab import build_vocab_from_iterator
 import tqdm
 import torch.multiprocessing as mp
 mp.freeze_support()
+import sentencepiece as spm
 
+def train_sentencepiece(data):
+    with open("corpus.txt", "w", encoding="utf-8") as f:
+        for example in data:
+            f.write(example["en"] + "\n")
+            f.write(example["de"] + "\n")
+
+    spm.SentencePieceTrainer.train(
+        input="corpus.txt",
+        model_prefix="spm",
+        vocab_size=16000,
+        character_coverage=1.0,
+        model_type="bpe",
+        user_defined_symbols=["<sos>", "<eos>", "<pad>"]
+    )
+
+class SPVocab:
+    def __init__(self, sp):
+        self.sp = sp
+
+    def lookup_indices(self, tokens):
+        return [self.sp.piece_to_id(tok) for tok in tokens]
+
+    def lookup_tokens(self, ids):
+        return [self.sp.id_to_piece(i) for i in ids]
+
+    def __len__(self):
+        return self.sp.get_piece_size()
+
+    def __getitem__(self, token):
+        return self.sp.piece_to_id(token)
 
 #returns an appropriately padded batch of sequences from given batch of english and german examples
 #the preprocessing function for the loader
@@ -60,10 +91,14 @@ if __name__=="__main__":
 
     print("Dataset Loaded")
 
+    sp = spm.SentencePieceProcessor()
+    sp.load("spm.model")
+
     #the arguments for the tokeniz_example function used below
     tokenize_kwargs = {
-        "en_nlp": spacy_en,
-        "de_nlp": spacy_de,
+        # "en_nlp": spacy_en,
+        # "de_nlp": spacy_de,
+        "sp":sp,
         "max_length": 100,
     }
 
@@ -76,44 +111,48 @@ if __name__=="__main__":
 
     if TRAIN:
         #english vocabulary generated from training data.
-        en_vocab = build_vocab_from_iterator(
-            train_data["en_tokens"],
-            #min_freq=2,
-            specials=[
-                "<unk>", #unknown token
-                "<pad>", #padding token
-                "<sos>", #start of sentence
-                "<eos>", #end of sentence
-            ],
-            min_freq=2
-        )
+        # en_vocab = build_vocab_from_iterator(
+        #     train_data["en_tokens"],
+        #     #min_freq=2,
+        #     specials=[
+        #         "<unk>", #unknown token
+        #         "<pad>", #padding token
+        #         "<sos>", #start of sentence
+        #         "<eos>", #end of sentence
+        #     ],
+        #     min_freq=2
+        # )
+        #
+        # #german vocabulary generated from training data. only includes words with multiple occurences
+        # de_vocab = build_vocab_from_iterator(
+        #     train_data["de_tokens"],
+        #     #min_freq=2,
+        #     specials=[
+        #         "<unk>", #unknown token
+        #         "<pad>", #padding token
+        #         "<sos>", #start of sentence
+        #         "<eos>", #end of sentence
+        #     ],
+        #     min_freq=2
+        # )
+        #
+        # # indices for unknown tokens and padding tokens
+        # unk_index = en_vocab["<unk>"]
+        # pad_index = en_vocab["<pad>"]
+        #
+        # # standardizes the default (unknown token) index
+        # en_vocab.set_default_index(unk_index)
+        # de_vocab.set_default_index(unk_index)
 
-        #german vocabulary generated from training data. only includes words with multiple occurences
-        de_vocab = build_vocab_from_iterator(
-            train_data["de_tokens"],
-            #min_freq=2,
-            specials=[
-                "<unk>", #unknown token
-                "<pad>", #padding token
-                "<sos>", #start of sentence
-                "<eos>", #end of sentence
-            ],
-            min_freq=2
-        )
-
-        # indices for unknown tokens and padding tokens
-        unk_index = en_vocab["<unk>"]
-        pad_index = en_vocab["<pad>"]
-
-        # standardizes the default (unknown token) index
-        en_vocab.set_default_index(unk_index)
-        de_vocab.set_default_index(unk_index)
+        en_vocab = SPVocab(sp)
+        de_vocab = SPVocab(sp)
+        pad_index = sp.piece_to_id("<pad>")
 
         #makes directory model/model_name to save the vocabs in based on the model name
         os.makedirs(os.path.join("models", MODEL_NAME), exist_ok=True)
         #saves vocabs in models/model_name
-        torch.save(en_vocab, os.path.join("models", MODEL_NAME, "en_vocab.pt"))
-        torch.save(de_vocab, os.path.join("models", MODEL_NAME, "de_vocab.pt"))
+        # torch.save(en_vocab, os.path.join("models", MODEL_NAME, "en_vocab.pt"))
+        # torch.save(de_vocab, os.path.join("models", MODEL_NAME, "de_vocab.pt"))
     else:
 
         #loads the vocabs from the models/model_name directory
@@ -150,7 +189,7 @@ if __name__=="__main__":
 
     print("Data Preprocessing Done")
 
-    BATCH_SIZE = 128
+    BATCH_SIZE = 16
     # number of iterations per epoch in traing is roughly total samples/BATCH_SIZE
 
     #locks the pad index parameter in collate so the workers in the loaders can use the retrieved pad index and pickle it
@@ -159,10 +198,25 @@ if __name__=="__main__":
     #creates loaders for all data sets
     #only shuffles the training dataset
     if TRAIN:
-        train_loader = get_loader(train_data,batch_size=BATCH_SIZE,shuffle=True,collate=collate_fn)
-        valid_loader = get_loader(valid_data,batch_size=BATCH_SIZE,shuffle=False,collate=collate_fn)
+        train_loader = get_loader(
+            train_data,
+            batch_size=BATCH_SIZE,
+            shuffle=True,
+            collate=collate_fn
+        )
+        valid_loader = get_loader(
+            valid_data,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            collate=collate_fn
+        )
     else:
-        test_loader = get_loader(test_data,batch_size=BATCH_SIZE,shuffle=False,collate=collate_fn)
+        test_loader = get_loader(
+            test_data,
+            batch_size=BATCH_SIZE,
+            shuffle=False,
+            collate=collate_fn
+        )
 
     # one hot and prediction vector lengths
     input_dim = len(de_vocab)
@@ -179,12 +233,15 @@ if __name__=="__main__":
     layers = 3
 
     # dropout percentage during training for the encoder and decoder
-    enc_dropout = .25
-    dec_dropout = .25
+    enc_dropout = .05
+    dec_dropout = .05
 
     # device is the gpu if possible
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
+
+    print(en_vocab['<pad>'])
+    print(de_vocab['<pad>'])
 
 
     # initializes the weights of the model to random ones
@@ -203,7 +260,7 @@ if __name__=="__main__":
         epoch_loss = 0
 
         for i, batch in enumerate(loader):
-            if i%25==0: print(i)
+            if i%100==0: print(i)
             src = batch["de_ids"].to(device)
             trg = batch["en_ids"].to(device)
 
@@ -227,6 +284,7 @@ if __name__=="__main__":
             # updates parameters
             scaler.step(optimizer)
             scaler.update()
+            scheduler.step()
             # adds loss this batch to total loss
             epoch_loss += loss.item()
         # returns the average loss per batch
@@ -261,7 +319,7 @@ if __name__=="__main__":
         return epoch_loss / len(loader)
 
 
-    epochs = 10
+    epochs = 15
     # max gradient to prevent exploding gradient
     clip = 1.0
     # change to teacher force
@@ -308,13 +366,22 @@ if __name__=="__main__":
         print("Model Weights Initialized")
 
         # optimizer for the training and criterion for evaluation (and training)
-        optimizer = optim.AdamW(model.parameters(), lr=3e-4)
+        optimizer = optim.AdamW(model.parameters(), lr=1.0)
 
 
         criterion = nn.CrossEntropyLoss(
                                         ignore_index=pad_index,
-                                        label_smoothing=0.1,
+                                        label_smoothing=0.075,
                                         )
+
+        d_model = hidden_dim
+
+        def lr_lambda(step):
+            step = max(step, 1)
+            warmup = 2000
+            return (d_model ** -0.5) * min(step ** -0.5, step * warmup ** -1.5)
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
         print("Beginning Training:")
 

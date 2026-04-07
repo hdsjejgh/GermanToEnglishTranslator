@@ -43,15 +43,30 @@ def load_data(dataset,split,count=None):
     return dataset_paths[dataset](split,count=count)
 
 #given an example (and the other arguments) returns the tokenized example with a sos and eos token added
-def tokenize_example(example, en_nlp, de_nlp, max_length):
-    #tokenizes and lowercases every example
-    en_tokens = [token.text.lower() for token in en_nlp.tokenizer(example["en"])][:max_length]
-    de_tokens = [token.text.lower() for token in de_nlp.tokenizer(example["de"])][:max_length]
-    #adds sos and eos tokens to the beginning and end
+# def tokenize_example(example, en_nlp, de_nlp, max_length):
+#     #tokenizes and lowercases every example
+#     en_tokens = [token.text.lower() for token in en_nlp.tokenizer(example["en"])][:max_length]
+#     de_tokens = [token.text.lower() for token in de_nlp.tokenizer(example["de"])][:max_length]
+#     #adds sos and eos tokens to the beginning and end
+#     en_tokens = ["<sos>"] + en_tokens + ["<eos>"]
+#     de_tokens = ["<sos>"] + de_tokens + ["<eos>"]
+#     #creates new column in given datasets for this
+#     return {"en_tokens": en_tokens, "de_tokens": de_tokens}
+
+def tokenize_example(example, sp, max_length):
+    en_tokens = sp.encode(example["en"], out_type=str)
+    de_tokens = sp.encode(example["de"], out_type=str)
+
     en_tokens = ["<sos>"] + en_tokens + ["<eos>"]
     de_tokens = ["<sos>"] + de_tokens + ["<eos>"]
-    #creates new column in given datasets for this
-    return {"en_tokens": en_tokens, "de_tokens": de_tokens}
+
+    en_tokens = en_tokens[:max_length]
+    de_tokens = de_tokens[:max_length]
+
+    return {
+        "en_tokens": en_tokens,
+        "de_tokens": de_tokens
+    }
 
 # generates list of vocab indices for each token in an example
 def numericalize_example(example,en_vocab,de_vocab):
