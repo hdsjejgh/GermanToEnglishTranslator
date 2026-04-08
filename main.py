@@ -70,7 +70,7 @@ if __name__=="__main__":
     TRAIN = True
     #number of training examples to use for larger datasets
     #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
-    TRAINING_EXAMPLES = 100_000
+    TRAINING_EXAMPLES = 500_000
     #name of model directory
     #saves model and vocab here if TRAIN = True
     #loads model and vocab from here if TRAIN = False
@@ -189,7 +189,7 @@ if __name__=="__main__":
 
     print("Data Preprocessing Done")
 
-    BATCH_SIZE = 16
+    BATCH_SIZE = 32
     # number of iterations per epoch in traing is roughly total samples/BATCH_SIZE
 
     #locks the pad index parameter in collate so the workers in the loaders can use the retrieved pad index and pickle it
@@ -230,11 +230,11 @@ if __name__=="__main__":
     hidden_dim = 512
 
     # layers (rows) in the rnn
-    layers = 3
+    layers = 6
 
     # dropout percentage during training for the encoder and decoder
-    enc_dropout = .05
-    dec_dropout = .05
+    enc_dropout = .1
+    dec_dropout = .1
 
     # device is the gpu if possible
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -279,6 +279,7 @@ if __name__=="__main__":
                 loss = criterion(output, trg)
                 scaler.scale(loss).backward()
                 # clips gradient in order to stop exploding gradient
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
 
             # updates parameters
@@ -319,7 +320,7 @@ if __name__=="__main__":
         return epoch_loss / len(loader)
 
 
-    epochs = 15
+    epochs = 20
     # max gradient to prevent exploding gradient
     clip = 1.0
     # change to teacher force
@@ -353,7 +354,7 @@ if __name__=="__main__":
             input_dim=input_dim,
             output_dim=output_dim,
             d_model=hidden_dim,
-            nhead=4,
+            nhead=8,
             layers=layers,
             dropout=enc_dropout,
             device=device
@@ -366,7 +367,7 @@ if __name__=="__main__":
         print("Model Weights Initialized")
 
         # optimizer for the training and criterion for evaluation (and training)
-        optimizer = optim.AdamW(model.parameters(), lr=1.0)
+        optimizer = optim.AdamW(model.parameters(), lr=1e-4,betas=(0.9,0.98),)
 
 
         criterion = nn.CrossEntropyLoss(
@@ -374,14 +375,7 @@ if __name__=="__main__":
                                         label_smoothing=0.075,
                                         )
 
-        d_model = hidden_dim
-
-        def lr_lambda(step):
-            step = max(step, 1)
-            warmup = 2000
-            return (d_model ** -0.5) * min(step ** -0.5, step * warmup ** -1.5)
-
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=78125)
 
         print("Beginning Training:")
 
