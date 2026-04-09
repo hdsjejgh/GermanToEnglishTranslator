@@ -1,3 +1,5 @@
+#ts file is just spaghetti code atp
+
 from models import *
 import torch.nn as nn
 import torch.optim as optim
@@ -15,6 +17,7 @@ import torch.multiprocessing as mp
 mp.freeze_support()
 import sentencepiece as spm
 
+
 def train_sentencepiece(data):
     with open("corpus.txt", "w", encoding="utf-8") as f:
         for example in data:
@@ -22,13 +25,16 @@ def train_sentencepiece(data):
             f.write(example["de"] + "\n")
 
     spm.SentencePieceTrainer.train(
+        "--minloglevel=2",
         input="corpus.txt",
-        model_prefix="spm",
+        model_prefix=os.path.join("models", MODEL_NAME,"spm"),
         vocab_size=16000,
         character_coverage=1.0,
         model_type="bpe",
-        user_defined_symbols=["<sos>", "<eos>", "<pad>"]
+        user_defined_symbols=["<sos>", "<eos>", "<pad>"],
     )
+
+    os.remove("corpus.txt")
 
 class SPVocab:
     def __init__(self, sp):
@@ -66,20 +72,29 @@ if __name__=="__main__":
 
     #currently supported datasets: multi30k, wmt14
     DATASET = "wmt14"
+
     # to train or not to train
-    TRAIN = True
+    TRAIN = False
+
+    #whether to use the spacy tokenizer or the sentencepiece bite-pair encoding tokenizer
+    #bite-pair is usually better
+    TOKENIZER_TYPE = {
+       0:"spacy",
+       1:"bpe",
+    }[1]
+
     #number of training examples to use for larger datasets
     #when loading smaller datasets (e.g. multi_30k), this is ignored and the whole dataset is loaded
     TRAINING_EXAMPLES = 500_000
+
     #name of model directory
     #saves model and vocab here if TRAIN = True
     #loads model and vocab from here if TRAIN = False
     MODEL_NAME = "de_to_en_transformer_2"
 
-    #small scale tokenizers for english and german
-    spacy_en = spacy.load('en_core_web_sm')
-    spacy_de = spacy.load('de_core_news_sm')
-    print("Tokenizers Loaded")
+    if TRAIN:
+        #makes directory model/model_name to save the vocabs in based on the model name
+        os.makedirs(os.path.join("models", MODEL_NAME), exist_ok=True)
 
     #the training and validation datasets are only loaded when training
     if TRAIN:
@@ -91,73 +106,104 @@ if __name__=="__main__":
 
     print("Dataset Loaded")
 
-    sp = spm.SentencePieceProcessor()
-    sp.load("spm.model")
+
+    #small scale tokenizers for english and german
+    if TOKENIZER_TYPE == "spacy":
+        spacy_en = spacy.load('en_core_web_sm')
+        spacy_de = spacy.load('de_core_news_sm')
+    elif TOKENIZER_TYPE == "bpe":
+        sp = spm.SentencePieceProcessor()
+        if TRAIN:
+            train_sentencepiece(train_data)
+        sp.load(os.path.join("models", MODEL_NAME, "spm.model"))
+    print("Tokenizers Loaded")
+
 
     #the arguments for the tokeniz_example function used below
-    tokenize_kwargs = {
-        # "en_nlp": spacy_en,
-        # "de_nlp": spacy_de,
-        "sp":sp,
-        "max_length": 100,
-    }
+
+    if TOKENIZER_TYPE == "spacy":
+        tokenize_kwargs = {
+            "en_nlp": spacy_en,
+            "de_nlp": spacy_de,
+            "max_length": 100,
+        }
+    if TOKENIZER_TYPE == "bpe":
+        tokenize_kwargs = {
+            "sp": sp,
+            "max_length": 100,
+        }
 
     #tokenizes the datasets
-    if TRAIN:
-        train_data = train_data.map(tokenize_example, fn_kwargs=tokenize_kwargs)
-        valid_data = valid_data.map(tokenize_example, fn_kwargs=tokenize_kwargs)
-    else:
-        test_data = test_data.map(tokenize_example, fn_kwargs=tokenize_kwargs)
+    if TOKENIZER_TYPE == "bpe":
+        if TRAIN:
+            train_data = train_data.map(tokenize_example_bpe, fn_kwargs=tokenize_kwargs)
+            valid_data = valid_data.map(tokenize_example_bpe, fn_kwargs=tokenize_kwargs)
+        else:
+            test_data = test_data.map(tokenize_example_bpe, fn_kwargs=tokenize_kwargs)
+    elif TOKENIZER_TYPE == "spacy":
+        if TRAIN:
+            train_data = train_data.map(tokenize_example_spacy, fn_kwargs=tokenize_kwargs)
+            valid_data = valid_data.map(tokenize_example_spacy, fn_kwargs=tokenize_kwargs)
+        else:
+            test_data = test_data.map(tokenize_example_spacy, fn_kwargs=tokenize_kwargs)
 
     if TRAIN:
-        #english vocabulary generated from training data.
-        # en_vocab = build_vocab_from_iterator(
-        #     train_data["en_tokens"],
-        #     #min_freq=2,
-        #     specials=[
-        #         "<unk>", #unknown token
-        #         "<pad>", #padding token
-        #         "<sos>", #start of sentence
-        #         "<eos>", #end of sentence
-        #     ],
-        #     min_freq=2
-        # )
-        #
-        # #german vocabulary generated from training data. only includes words with multiple occurences
-        # de_vocab = build_vocab_from_iterator(
-        #     train_data["de_tokens"],
-        #     #min_freq=2,
-        #     specials=[
-        #         "<unk>", #unknown token
-        #         "<pad>", #padding token
-        #         "<sos>", #start of sentence
-        #         "<eos>", #end of sentence
-        #     ],
-        #     min_freq=2
-        # )
-        #
-        # # indices for unknown tokens and padding tokens
-        # unk_index = en_vocab["<unk>"]
-        # pad_index = en_vocab["<pad>"]
-        #
-        # # standardizes the default (unknown token) index
-        # en_vocab.set_default_index(unk_index)
-        # de_vocab.set_default_index(unk_index)
+        #creates a vocab based on spacy tokenizer
+        if TOKENIZER_TYPE == "spacy":
+            #english vocabulary generated from training data.
+            en_vocab = build_vocab_from_iterator(
+                train_data["en_tokens"],
+                #min_freq=2,
+                specials=[
+                    "<unk>", #unknown token
+                    "<pad>", #padding token
+                    "<sos>", #start of sentence
+                    "<eos>", #end of sentence
+                ],
+                min_freq=2
+            )
 
-        en_vocab = SPVocab(sp)
-        de_vocab = SPVocab(sp)
-        pad_index = sp.piece_to_id("<pad>")
+            #german vocabulary generated from training data. only includes words with multiple occurences
+            de_vocab = build_vocab_from_iterator(
+                train_data["de_tokens"],
+                #min_freq=2,
+                specials=[
+                    "<unk>", #unknown token
+                    "<pad>", #padding token
+                    "<sos>", #start of sentence
+                    "<eos>", #end of sentence
+                ],
+                min_freq=2
+            )
 
-        #makes directory model/model_name to save the vocabs in based on the model name
-        os.makedirs(os.path.join("models", MODEL_NAME), exist_ok=True)
-        #saves vocabs in models/model_name
-        # torch.save(en_vocab, os.path.join("models", MODEL_NAME, "en_vocab.pt"))
-        # torch.save(de_vocab, os.path.join("models", MODEL_NAME, "de_vocab.pt"))
+            # indices for unknown tokens and padding tokens
+            unk_index = en_vocab["<unk>"]
+            pad_index = en_vocab["<pad>"]
+
+            # standardizes the default (unknown token) index
+            en_vocab.set_default_index(unk_index)
+            de_vocab.set_default_index(unk_index)
+
+            # saves vocabs in models/model_name
+            torch.save(en_vocab, os.path.join("models", MODEL_NAME, "en_vocab.pt"))
+            torch.save(de_vocab, os.path.join("models", MODEL_NAME, "de_vocab.pt"))
+        #creates vocabulary using a byte-pair encoder
+        elif TOKENIZER_TYPE == "bpe":
+            en_vocab = SPVocab(sp)
+            de_vocab = SPVocab(sp)
+            pad_index = sp.piece_to_id("<pad>")
+
+
+
     else:
 
-        #loads the vocabs from the models/model_name directory
-        en_vocab = torch.load(os.path.join("models", MODEL_NAME, "en_vocab.pt"))
-        de_vocab = torch.load(os.path.join("models", MODEL_NAME, "de_vocab.pt"))
+        # loads the vocabs from the models/model_name directory
+        if TOKENIZER_TYPE == "spacy":
+            en_vocab = torch.load(os.path.join("models", MODEL_NAME, "en_vocab.pt"))
+            de_vocab = torch.load(os.path.join("models", MODEL_NAME, "de_vocab.pt"))
+        elif TOKENIZER_TYPE == "bpe":
+            en_vocab = SPVocab(sp)
+            de_vocab = SPVocab(sp)
 
         #retrieve the unknown and padding tokens
         unk_index = en_vocab["<unk>"]
@@ -239,10 +285,6 @@ if __name__=="__main__":
     # device is the gpu if possible
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
-
-    print(en_vocab['<pad>'])
-    print(de_vocab['<pad>'])
-
 
     # initializes the weights of the model to random ones
     def initialize(m):
@@ -466,7 +508,10 @@ if __name__=="__main__":
     def translate_with_transformer(sentence,model,max_output_length=25):
         model.eval()
         with torch.no_grad():
-            tokens = [token.text for token in spacy_de.tokenizer(sentence)]
+            if TOKENIZER_TYPE == "spacy":
+                tokens = [token.text for token in spacy_de.tokenizer(sentence)]
+            if TOKENIZER_TYPE == "bpe":
+                tokens = sp.encode_as_pieces(sentence)
             tokens = [token.lower() for token in tokens]
             tokens = ["<sos>"] + tokens + ["<eos>"]
             ids = de_vocab.lookup_indices(tokens)
