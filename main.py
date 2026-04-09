@@ -17,38 +17,45 @@ import torch.multiprocessing as mp
 mp.freeze_support()
 import sentencepiece as spm
 
-
+#trains a sentencepiece byte-pair encoder model based on the given set of data and saves it
 def train_sentencepiece(data):
+    #writes the english and german texts to a corpus file so they can be used to make 1 tokenizer
     with open("corpus.txt", "w", encoding="utf-8") as f:
         for example in data:
             f.write(example["en"] + "\n")
             f.write(example["de"] + "\n")
 
+    #trains it
     spm.SentencePieceTrainer.train(
-        "--minloglevel=2",
         input="corpus.txt",
         model_prefix=os.path.join("models", MODEL_NAME,"spm"),
+        #total tokens to make
         vocab_size=16000,
         character_coverage=1.0,
         model_type="bpe",
         user_defined_symbols=["<sos>", "<eos>", "<pad>"],
     )
 
+    #deletes the corpus file
     os.remove("corpus.txt")
 
+#vocab class which lets you lookup tokens and indices like you could with a pytorch vocab file
 class SPVocab:
     def __init__(self, sp):
         self.sp = sp
 
+    #given tokens, lookup the indices
     def lookup_indices(self, tokens):
         return [self.sp.piece_to_id(tok) for tok in tokens]
 
+    #given indices, lookup the tokens
     def lookup_tokens(self, ids):
         return [self.sp.id_to_piece(i) for i in ids]
 
     def __len__(self):
         return self.sp.get_piece_size()
 
+    #gets id for given token
     def __getitem__(self, token):
         return self.sp.piece_to_id(token)
 
@@ -74,7 +81,7 @@ if __name__=="__main__":
     DATASET = "wmt14"
 
     # to train or not to train
-    TRAIN = False
+    TRAIN = True
 
     #whether to use the spacy tokenizer or the sentencepiece bite-pair encoding tokenizer
     #bite-pair is usually better
@@ -474,7 +481,10 @@ if __name__=="__main__":
         model.eval()
         with torch.no_grad():
             #tokenizes, lowercases, and adds <sos> and <eos> tokens to the sentence
-            tokens = [token.text for token in spacy_de.tokenizer(sentence)]
+            if TOKENIZER_TYPE == "spacy":
+                tokens = [token.text for token in spacy_de.tokenizer(sentence)]
+            if TOKENIZER_TYPE == "bpe":
+                tokens = sp.encode_as_pieces(sentence)
             tokens = [token.lower() for token in tokens]
             tokens = ["<sos>"] + tokens + ["<eos>"]
             #gets the indices from the vocab
