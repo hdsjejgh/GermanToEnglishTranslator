@@ -19,25 +19,42 @@ import sentencepiece as spm
 
 #trains a sentencepiece byte-pair encoder model based on the given set of data and saves it
 def train_sentencepiece(data):
-    #writes the english and german texts to a corpus file so they can be used to make 1 tokenizer
-    with open("corpus.txt", "w", encoding="utf-8") as f:
+    #writes the english and german texts to a corpus file so they can be used to make the two tokenizers
+    with open("corpusen.txt", "w", encoding="utf-8") as f:
         for example in data:
             f.write(example["en"] + "\n")
+    with open("corpusde.txt", "w", encoding="utf-8") as f:
+        for example in data:
             f.write(example["de"] + "\n")
 
-    #trains it
+    #trains english tokenizer
     spm.SentencePieceTrainer.train(
-        input="corpus.txt",
-        model_prefix=os.path.join("models", MODEL_NAME,"spm"),
+        input="corpusen.txt",
+        model_prefix=os.path.join("models", MODEL_NAME,"spm_en"),
         #total tokens to make
-        vocab_size=16000,
+        vocab_size=20000,
         character_coverage=1.0,
         model_type="bpe",
         user_defined_symbols=["<sos>", "<eos>", "<pad>"],
+        minloglevel=2
     )
 
-    #deletes the corpus file
-    os.remove("corpus.txt")
+
+    # trains german tokenizer
+    spm.SentencePieceTrainer.train(
+        input="corpusde.txt",
+        model_prefix=os.path.join("models", MODEL_NAME, "spm_de"),
+        # total tokens to make
+        vocab_size=20000,
+        character_coverage=1.0,
+        model_type="bpe",
+        user_defined_symbols=["<sos>", "<eos>", "<pad>"],
+        minloglevel=2
+    )
+
+    #deletes the corpus files
+    os.remove("corpusen.txt")
+    os.remove("corpusde.txt")
 
 #vocab class which lets you lookup tokens and indices like you could with a pytorch vocab file
 class SPVocab:
@@ -97,7 +114,7 @@ if __name__=="__main__":
     #name of model directory
     #saves model and vocab here if TRAIN = True
     #loads model and vocab from here if TRAIN = False
-    MODEL_NAME = "de_to_en_transformer_2"
+    MODEL_NAME = "de_to_en_transformer_3"
 
     if TRAIN:
         #makes directory model/model_name to save the vocabs in based on the model name
@@ -119,10 +136,12 @@ if __name__=="__main__":
         spacy_en = spacy.load('en_core_web_sm')
         spacy_de = spacy.load('de_core_news_sm')
     elif TOKENIZER_TYPE == "bpe":
-        sp = spm.SentencePieceProcessor()
+        sp_en = spm.SentencePieceProcessor()
+        sp_de = spm.SentencePieceProcessor()
         if TRAIN:
             train_sentencepiece(train_data)
-        sp.load(os.path.join("models", MODEL_NAME, "spm.model"))
+        sp_en.load(os.path.join("models", MODEL_NAME, "spm_en.model"))
+        sp_de.load(os.path.join("models", MODEL_NAME, "spm_de.model"))
     print("Tokenizers Loaded")
 
 
@@ -136,7 +155,9 @@ if __name__=="__main__":
         }
     if TOKENIZER_TYPE == "bpe":
         tokenize_kwargs = {
-            "sp": sp,
+            #"sp": sp,
+            "sp_en":sp_en,
+            "sp_de":sp_de,
             "max_length": 100,
         }
 
@@ -196,9 +217,10 @@ if __name__=="__main__":
             torch.save(de_vocab, os.path.join("models", MODEL_NAME, "de_vocab.pt"))
         #creates vocabulary using a byte-pair encoder
         elif TOKENIZER_TYPE == "bpe":
-            en_vocab = SPVocab(sp)
-            de_vocab = SPVocab(sp)
-            pad_index = sp.piece_to_id("<pad>")
+            en_vocab = SPVocab(sp_en)
+            de_vocab = SPVocab(sp_de)
+            pad_index = sp_en.piece_to_id("<pad>")
+            print("Pad Indexes line up?: ",pad_index == sp_de.piece_to_id("<pad>"))
 
 
 
@@ -209,8 +231,8 @@ if __name__=="__main__":
             en_vocab = torch.load(os.path.join("models", MODEL_NAME, "en_vocab.pt"))
             de_vocab = torch.load(os.path.join("models", MODEL_NAME, "de_vocab.pt"))
         elif TOKENIZER_TYPE == "bpe":
-            en_vocab = SPVocab(sp)
-            de_vocab = SPVocab(sp)
+            en_vocab = SPVocab(sp_en)
+            de_vocab = SPVocab(sp_de)
 
         #retrieve the unknown and padding tokens
         unk_index = en_vocab["<unk>"]
@@ -484,7 +506,7 @@ if __name__=="__main__":
             if TOKENIZER_TYPE == "spacy":
                 tokens = [token.text for token in spacy_de.tokenizer(sentence)]
             if TOKENIZER_TYPE == "bpe":
-                tokens = sp.encode_as_pieces(sentence)
+                tokens = sp_de.encode_as_pieces(sentence)
             tokens = [token.lower() for token in tokens]
             tokens = ["<sos>"] + tokens + ["<eos>"]
             #gets the indices from the vocab
@@ -521,7 +543,7 @@ if __name__=="__main__":
             if TOKENIZER_TYPE == "spacy":
                 tokens = [token.text for token in spacy_de.tokenizer(sentence)]
             if TOKENIZER_TYPE == "bpe":
-                tokens = sp.encode_as_pieces(sentence)
+                tokens = sp_de.encode_as_pieces(sentence)
             tokens = [token.lower() for token in tokens]
             tokens = ["<sos>"] + tokens + ["<eos>"]
             ids = de_vocab.lookup_indices(tokens)

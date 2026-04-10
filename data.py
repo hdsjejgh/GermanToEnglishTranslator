@@ -59,11 +59,19 @@ def tokenize_example_spacy(example, en_nlp, de_nlp, max_length):
     }
 
 #given an example (and the other arguments) returns the bpe tokenized example with a sos and eos token added
-def tokenize_example_bpe(example, sp, max_length):
-    #encodes using the given sentencepiece tokenizer
-    # this was made for bpe tokenizers but i guess it could work for any sentence piece based tokenizer
-    en_tokens = sp.encode(example["en"], out_type=str)
-    de_tokens = sp.encode(example["de"], out_type=str)
+# this was made for bpe tokenizers but i guess it could work for any sentence piece based tokenizer
+def tokenize_example_bpe(example, max_length,sp=None,sp_en=None,sp_de=None):
+    #ensures either an sp tokenizer xor an sp_en and sp_de tokenizer is passed in
+    assert ((sp is not None) ^ (sp_en is not None and sp_de is not None)), "You must either pass an individual sp_en and sp_de tokenizer for each language, or a single sp tokenizer for both"
+
+    # uses the given sentencepiece tokenizer for both languages
+    if (sp is not None):
+        en_tokens = sp.encode(example["en"], out_type=str)
+        de_tokens = sp.encode(example["de"], out_type=str)
+    # uses the individual tokenizers for each language given
+    else:
+        en_tokens = sp_en.encode(example["en"], out_type=str)
+        de_tokens = sp_de.encode(example["de"], out_type=str)
 
     #adds the sentence start and end tokens
     en_tokens = ["<sos>"] + en_tokens + ["<eos>"]
