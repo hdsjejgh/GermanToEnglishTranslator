@@ -98,7 +98,7 @@ if __name__=="__main__":
     DATASET = "wmt14"
 
     # to train or not to train
-    TRAIN = True
+    TRAIN = False
 
     #whether to use the spacy tokenizer or the sentencepiece bite-pair encoding tokenizer
     #bite-pair is usually better
@@ -331,7 +331,7 @@ if __name__=="__main__":
         epoch_loss = 0
 
         for i, batch in enumerate(loader):
-            if i%100==0: print(i)
+            if i%1000==0: print(i)
             src = batch["de_ids"].to(device)
             trg = batch["en_ids"].to(device)
 
@@ -592,7 +592,10 @@ if __name__=="__main__":
 
     #tokenizes a given sentence and lowercases
     def tokenizer_fn(s):
-        tokens = [token.text for token in spacy_en.tokenizer(s)]
+        if TOKENIZER_TYPE == "spacy":
+            tokens = [token.text for token in spacy_en.tokenizer(s)]
+        elif TOKENIZER_TYPE == "bpe":
+            tokens = sp_de.encode_as_pieces(s)
         tokens = [token.lower() for token in tokens]
         return tokens
 
