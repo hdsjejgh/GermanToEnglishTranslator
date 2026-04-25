@@ -40,3 +40,7 @@ Bleu Score on Testing Dataset = 0.16369
 
 Loss on Testing Dataset (CCE) = 3.3620
 
+
+The other models are too large to commit but theyre in this google drive folder:
+https://drive.google.com/drive/u/0/folders/1JTc8SGpGS2WsMq2jiHCtVN_AByPa-vF1
+
